@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, memo } from "react";
+import { useEffect, useState, useMemo, memo, useCallback } from "react";
 import {
   Plus,
   Trash2,
@@ -78,25 +78,27 @@ const getCategory = (id) =>
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-const formatCurrency = (n, currency = "USD") =>
-  new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(n);
+// Cache one Intl.NumberFormat per currency. Constructing it is expensive and
+// formatCurrency runs dozens of times per render, so this cuts render cost a lot.
+const _fmtCache = {};
+const formatCurrency = (n, currency = "USD") => {
+  let fmt = _fmtCache[currency];
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    });
+    _fmtCache[currency] = fmt;
+  }
+  return fmt.format(n);
+};
 
 
 export default function Home() {
   const [transactions, setTransactions] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [currency, setCurrency] = useState("USD");
-
-  // form state
-  const [type, setType] = useState("expense");
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("food");
-  const [description, setDescription] = useState("");
-  const [date, setDate] = useState(todayISO());
 
   // filter state
   const [search, setSearch] = useState("");
@@ -145,46 +147,26 @@ export default function Home() {
     );
   }, [transactions, currency, loaded]);
 
-  // When switching type, default the category to a sensible value for that type
-  const selectType = (id) => {
-    setType(id);
-    if (id === "expense") setCategory("food");
-    else if (id === "income") setCategory("daily");
-    else setCategory(id); // save / withdraw don't use a category picker
-  };
+  // Stable callbacks so memoized children (form, rows) don't re-render needlessly.
+  const handleAdd = useCallback(
+    (newTx) => {
+      setTransactions((prev) => [newTx, ...prev]);
+      setToast({
+        key: Date.now(),
+        msg: `${getType(newTx.type).label} of ${formatCurrency(
+          newTx.amount,
+          currency
+        )} added`,
+        color: getType(newTx.type).color,
+      });
+    },
+    [currency]
+  );
 
-  const addTransaction = (e) => {
-    e.preventDefault();
-    const value = parseFloat(amount);
-    if (!value || value <= 0) return;
-    const usesCategory = type === "expense" || type === "income";
-    const fallback = usesCategory
-      ? getCategory(category).label
-      : getType(type).label;
-    const newTx = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      type,
-      amount: value,
-      category: usesCategory ? category : type,
-      description: description.trim() || fallback,
-      date,
-      createdAt: Date.now(),
-    };
-    setTransactions((prev) => [newTx, ...prev]);
-    setToast({
-      key: Date.now(),
-      msg: `${getType(type).label} of ${formatCurrency(value, currency)} added`,
-      color: getType(type).color,
-    });
-    setAmount("");
-    setDescription("");
-    setDate(todayISO());
-  };
-
-  const deleteTransaction = (id) => {
+  const deleteTransaction = useCallback((id) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
     setToast({ key: Date.now(), msg: "Transaction deleted", color: "#64748b" });
-  };
+  }, []);
 
   const exportCSV = () => {
     const header = "Date,Type,Category,Description,Amount\n";
@@ -293,10 +275,6 @@ export default function Home() {
     }
     return months;
   }, [transactions]);
-
-  const usesCategory = type === "expense" || type === "income";
-  const categoryOptions =
-    type === "income" ? INCOME_SOURCES : EXPENSE_CATEGORIES;
 
   return (
     <div className="flex min-h-screen">
@@ -409,148 +387,10 @@ export default function Home() {
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* Add transaction form */}
+        {/* Add transaction form (isolated state so typing/clicking here does
+            not re-render the dashboard, stats, charts, or history list) */}
         <section className="lg:col-span-2">
-          <div className="card p-6 rise" style={{ animationDelay: "400ms" }}>
-            <h2 className="text-[15px] font-semibold mb-4 flex items-center gap-2">
-              <span className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                <Plus size={15} />
-              </span>
-              Add Transaction
-            </h2>
-
-            {/* Type selector */}
-            <div className="grid grid-cols-3 gap-1.5 mb-5 p-1 bg-slate-50 rounded-2xl border border-slate-100">
-              {TYPES.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => selectType(t.id)}
-                  className={`text-xs font-medium py-2 rounded-xl transition-all leading-tight ${
-                    type === t.id
-                      ? "text-white shadow-md"
-                      : "bg-transparent hover:bg-white text-slate-500"
-                  }`}
-                  style={
-                    type === t.id
-                      ? {
-                          background: `linear-gradient(135deg, ${t.color}, ${t.color}dd)`,
-                          boxShadow: `0 6px 16px -6px ${t.color}99`,
-                        }
-                      : undefined
-                  }
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            <form onSubmit={addTransaction} className="space-y-4">
-              <div>
-                <label className="text-xs font-medium text-slate-500">
-                  Amount
-                </label>
-                <div className="relative mt-1.5">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">
-                    {formatCurrency(0, currency).replace(/[\d.,\s]/g, "")}
-                  </span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    required
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="0.00"
-                    className="tnum w-full pl-8 pr-3 py-2.5 text-lg font-semibold bg-slate-50 border border-slate-200/70 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:bg-white focus:border-blue-300 transition"
-                  />
-                </div>
-              </div>
-
-              {usesCategory && (
-                <div>
-                  <label className="text-xs font-medium text-slate-500">
-                    {type === "income" ? "Source" : "Category"}
-                  </label>
-                  <div className="grid grid-cols-4 gap-1.5 mt-1.5">
-                    {categoryOptions.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => setCategory(c.id)}
-                        className={`text-xs font-medium py-2 rounded-xl border transition-all ${
-                          category === c.id
-                            ? "border-transparent text-white shadow-md shadow-blue-500/20 bg-gradient-to-br from-slate-800 to-slate-900"
-                            : "border-slate-200/70 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-600"
-                        }`}
-                      >
-                        {c.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {!usesCategory && (
-                <div className="text-xs text-blue-700/80 bg-blue-50/60 border border-blue-100 rounded-xl px-3.5 py-3 flex items-center gap-2.5">
-                  <PiggyBank size={16} className="text-blue-500 shrink-0" />
-                  {type === "save"
-                    ? "Moves money from In Hand into your Bank."
-                    : type === "withdraw"
-                    ? "Takes money from your Bank back into In Hand."
-                    : type === "lend"
-                    ? "Money you lent out. Stays in Net Worth as “Owed to Me”."
-                    : "Someone paid you back. Moves it back into In Hand."}
-                </div>
-              )}
-
-              <div>
-                <label className="text-xs font-medium text-slate-500">
-                  Note (optional)
-                </label>
-                <input
-                  type="text"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder={
-                    type === "income"
-                      ? "Daily wage, freelance, etc."
-                      : type === "expense"
-                      ? "Coffee, groceries, etc."
-                      : type === "lend" || type === "repay"
-                      ? "Who borrowed it, reason, etc."
-                      : "Bank name, reason, etc."
-                  }
-                  className="w-full mt-1.5 bg-slate-50 border border-slate-200/70 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:bg-white focus:border-blue-300 transition"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-500">
-                  Date
-                </label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full mt-1.5 bg-slate-50 border border-slate-200/70 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:bg-white focus:border-blue-300 transition"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full text-white rounded-xl py-3 font-semibold transition-all hover:-translate-y-0.5 shadow-lg"
-                style={{
-                  background: `linear-gradient(135deg, ${getType(type).color}, ${
-                    getType(type).color
-                  }cc)`,
-                  boxShadow: `0 10px 24px -10px ${getType(type).color}`,
-                }}
-              >
-                Add {getType(type).label}
-              </button>
-            </form>
-          </div>
+          <AddTransaction currency={currency} onAdd={handleAdd} />
         </section>
 
         {/* Right column */}
@@ -870,6 +710,187 @@ const TopCategories = memo(function TopCategories({ data, currency }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+});
+
+// Self-contained add form. Keeping its state local means typing an amount or
+// clicking a type/category button only re-renders THIS card — not the whole
+// dashboard, stats, charts, and history list. That removes the input lag.
+const AddTransaction = memo(function AddTransaction({ currency, onAdd }) {
+  const [type, setType] = useState("expense");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState("food");
+  const [description, setDescription] = useState("");
+  const [date, setDate] = useState(todayISO());
+
+  const selectType = (id) => {
+    setType(id);
+    if (id === "expense") setCategory("food");
+    else if (id === "income") setCategory("daily");
+    else setCategory(id);
+  };
+
+  const submit = (e) => {
+    e.preventDefault();
+    const value = parseFloat(amount);
+    if (!value || value <= 0) return;
+    const usesCat = type === "expense" || type === "income";
+    const fallback = usesCat ? getCategory(category).label : getType(type).label;
+    onAdd({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      type,
+      amount: value,
+      category: usesCat ? category : type,
+      description: description.trim() || fallback,
+      date,
+      createdAt: Date.now(),
+    });
+    setAmount("");
+    setDescription("");
+    setDate(todayISO());
+  };
+
+  const usesCategory = type === "expense" || type === "income";
+  const categoryOptions =
+    type === "income" ? INCOME_SOURCES : EXPENSE_CATEGORIES;
+
+  return (
+    <div className="card p-6 rise" style={{ animationDelay: "400ms" }}>
+      <h2 className="text-[15px] font-semibold mb-4 flex items-center gap-2">
+        <span className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+          <Plus size={15} />
+        </span>
+        Add Transaction
+      </h2>
+
+      {/* Type selector */}
+      <div className="grid grid-cols-3 gap-1.5 mb-5 p-1 bg-slate-50 rounded-2xl border border-slate-100">
+        {TYPES.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => selectType(t.id)}
+            className={`text-xs font-medium py-2 rounded-xl transition-all leading-tight ${
+              type === t.id
+                ? "text-white shadow-md"
+                : "bg-transparent hover:bg-white text-slate-500"
+            }`}
+            style={
+              type === t.id
+                ? {
+                    background: `linear-gradient(135deg, ${t.color}, ${t.color}dd)`,
+                    boxShadow: `0 6px 16px -6px ${t.color}99`,
+                  }
+                : undefined
+            }
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500">Amount</label>
+          <div className="relative mt-1.5">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">
+              {formatCurrency(0, currency).replace(/[\d.,\s]/g, "")}
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              className="tnum w-full pl-8 pr-3 py-2.5 text-lg font-semibold bg-slate-50 border border-slate-200/70 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:bg-white focus:border-blue-300 transition"
+            />
+          </div>
+        </div>
+
+        {usesCategory && (
+          <div>
+            <label className="text-xs font-medium text-slate-500">
+              {type === "income" ? "Source" : "Category"}
+            </label>
+            <div className="grid grid-cols-4 gap-1.5 mt-1.5">
+              {categoryOptions.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setCategory(c.id)}
+                  className={`text-xs font-medium py-2 rounded-xl border transition-all ${
+                    category === c.id
+                      ? "border-transparent text-white shadow-md shadow-blue-500/20 bg-gradient-to-br from-slate-800 to-slate-900"
+                      : "border-slate-200/70 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!usesCategory && (
+          <div className="text-xs text-blue-700/80 bg-blue-50/60 border border-blue-100 rounded-xl px-3.5 py-3 flex items-center gap-2.5">
+            <PiggyBank size={16} className="text-blue-500 shrink-0" />
+            {type === "save"
+              ? "Moves money from In Hand into your Bank."
+              : type === "withdraw"
+              ? "Takes money from your Bank back into In Hand."
+              : type === "lend"
+              ? "Money you lent out. Stays in Net Worth as “Owed to Me”."
+              : "Someone paid you back. Moves it back into In Hand."}
+          </div>
+        )}
+
+        <div>
+          <label className="text-xs font-medium text-slate-500">
+            Note (optional)
+          </label>
+          <input
+            type="text"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={
+              type === "income"
+                ? "Daily wage, freelance, etc."
+                : type === "expense"
+                ? "Coffee, groceries, etc."
+                : type === "lend" || type === "repay"
+                ? "Who borrowed it, reason, etc."
+                : "Bank name, reason, etc."
+            }
+            className="w-full mt-1.5 bg-slate-50 border border-slate-200/70 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:bg-white focus:border-blue-300 transition"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-slate-500">Date</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full mt-1.5 bg-slate-50 border border-slate-200/70 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:bg-white focus:border-blue-300 transition"
+          />
+        </div>
+
+        <button
+          type="submit"
+          className="w-full text-white rounded-xl py-3 font-semibold transition-all hover:-translate-y-0.5 shadow-lg"
+          style={{
+            background: `linear-gradient(135deg, ${getType(type).color}, ${
+              getType(type).color
+            }cc)`,
+            boxShadow: `0 10px 24px -10px ${getType(type).color}`,
+          }}
+        >
+          Add {getType(type).label}
+        </button>
+      </form>
     </div>
   );
 });
