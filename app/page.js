@@ -78,6 +78,44 @@ const getCategory = (id) =>
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+const ordinal = (n) => {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
+};
+
+// Catmull-Rom spline -> cubic bezier path for a smooth line through points.
+const smoothPath = (pts) => {
+  if (pts.length === 0) return "";
+  if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2[0]} ${p2[1]}`;
+  }
+  return d;
+};
+
+// Pick a "nice" axis max and evenly spaced ticks (~4 steps).
+const niceTicks = (maxVal) => {
+  if (maxVal <= 0) return { niceMax: 1, ticks: [0, 1] };
+  const rough = maxVal / 4;
+  const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+  const step =
+    [1, 2, 2.5, 5, 10].map((c) => c * pow).find((c) => c >= rough) || 10 * pow;
+  const niceMax = Math.ceil(maxVal / step) * step;
+  const ticks = [];
+  for (let v = 0; v <= niceMax + 1e-9; v += step) ticks.push(v);
+  return { niceMax, ticks };
+};
+
 // Cache one Intl.NumberFormat per currency. Constructing it is expensive and
 // formatCurrency runs dozens of times per render, so this cuts render cost a lot.
 const _fmtCache = {};
@@ -246,6 +284,28 @@ export default function Home() {
     })).filter((d) => d.value > 0);
   }, [transactions, thisMonthKey]);
 
+  // Daily spending, last 7 days (for the Expense Overview trend line)
+  const dailyExpenses = useMemo(() => {
+    const arr = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      let value = 0;
+      for (const t of transactions) {
+        if (t.type === "expense" && t.date === key) value += t.amount;
+      }
+      arr.push({
+        label: `${d.getDate()}${ordinal(d.getDate())} ${d.toLocaleDateString(
+          undefined,
+          { month: "short" }
+        )}`,
+        value: parseFloat(value.toFixed(2)),
+      });
+    }
+    return arr;
+  }, [transactions]);
+
   // Income vs Expense, last 6 months
   const last6Months = useMemo(() => {
     const base = new Date();
@@ -361,6 +421,31 @@ export default function Home() {
         />
       </section>
 
+      {/* Expense Overview trend */}
+      <section
+        className="card p-6 mb-6 rise"
+        style={{ animationDelay: "280ms" }}
+      >
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div>
+            <h2 className="text-lg font-bold tracking-tight">
+              Expense Overview
+            </h2>
+            <p className="text-[13px] text-slate-400 mt-0.5 max-w-md">
+              Track your spending trends over time and gain insights into where
+              your money goes.
+            </p>
+          </div>
+          <a
+            href="#add-transaction"
+            className="shrink-0 text-sm font-medium flex items-center gap-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl px-4 py-2.5 transition"
+          >
+            <Plus size={16} /> Add Expense
+          </a>
+        </div>
+        <ExpenseOverview data={dailyExpenses} currency={currency} />
+      </section>
+
       {/* Charts row */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <div
@@ -389,7 +474,7 @@ export default function Home() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Add transaction form (isolated state so typing/clicking here does
             not re-render the dashboard, stats, charts, or history list) */}
-        <section className="lg:col-span-2">
+        <section id="add-transaction" className="lg:col-span-2 scroll-mt-6">
           <AddTransaction currency={currency} onAdd={handleAdd} />
         </section>
 
@@ -710,6 +795,130 @@ const TopCategories = memo(function TopCategories({ data, currency }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+});
+
+// Smooth area/line spending trend, drawn as plain SVG (no charting library).
+const ExpenseOverview = memo(function ExpenseOverview({ data, currency }) {
+  const W = 720;
+  const H = 280;
+  const padL = 52;
+  const padR = 18;
+  const padT = 18;
+  const padB = 38;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const rawMax = Math.max(...data.map((d) => d.value), 0);
+  const { niceMax, ticks } = niceTicks(rawMax);
+
+  const n = data.length;
+  const pts = data.map((d, i) => {
+    const x = n === 1 ? padL + innerW / 2 : padL + (i / (n - 1)) * innerW;
+    const y = padT + innerH - (d.value / niceMax) * innerH;
+    return [x, y];
+  });
+  const line = smoothPath(pts);
+  const baseY = padT + innerH;
+  const area = pts.length
+    ? `${line} L ${pts[pts.length - 1][0]} ${baseY} L ${pts[0][0]} ${baseY} Z`
+    : "";
+
+  const fmtY = (v) =>
+    v >= 1000 ? `${(v / 1000).toFixed(v % 1000 ? 1 : 0)}k` : `${v}`;
+
+  return (
+    <div className="w-full overflow-hidden">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full h-auto"
+        style={{ maxHeight: 320 }}
+      >
+        <defs>
+          <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#6366f1" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="trendLine" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#6366f1" />
+            <stop offset="100%" stopColor="#4f46e5" />
+          </linearGradient>
+        </defs>
+
+        {/* horizontal gridlines + y labels */}
+        {ticks.map((t, i) => {
+          const y = padT + innerH - (t / niceMax) * innerH;
+          return (
+            <g key={i}>
+              <line
+                x1={padL}
+                x2={W - padR}
+                y1={y}
+                y2={y}
+                stroke="#eef2f7"
+                strokeWidth="1"
+              />
+              <text
+                x={padL - 12}
+                y={y + 4}
+                textAnchor="end"
+                fontSize="13"
+                fill="#94a3b8"
+              >
+                {fmtY(t)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* area + line + dots */}
+        {area && <path d={area} fill="url(#trendFill)" className="fade-in" />}
+        {line && (
+          <path
+            d={line}
+            fill="none"
+            stroke="url(#trendLine)"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            pathLength="1"
+            className="line-draw"
+          />
+        )}
+        {pts.map(([x, y], i) => (
+          <circle
+            key={i}
+            cx={x}
+            cy={y}
+            r="5"
+            fill="#6366f1"
+            stroke="#fff"
+            strokeWidth="2.5"
+            className="fade-in"
+            style={{ animationDelay: `${500 + i * 60}ms` }}
+          >
+            <title>{`${data[i].label}: ${formatCurrency(
+              data[i].value,
+              currency
+            )}`}</title>
+          </circle>
+        ))}
+
+        {/* x labels */}
+        {data.map((d, i) => (
+          <text
+            key={i}
+            x={pts[i][0]}
+            y={H - 12}
+            textAnchor="middle"
+            fontSize="13"
+            fill="#94a3b8"
+          >
+            {d.label}
+          </text>
+        ))}
+      </svg>
     </div>
   );
 });
