@@ -16,6 +16,7 @@ import {
   PiggyBank,
   CheckCircle2,
   Activity,
+  LayoutDashboard,
 } from "lucide-react";
 import {
   PieChart,
@@ -46,6 +47,22 @@ const TYPES = [
   { id: "repay", label: "Repaid", color: "#0891b2", sign: +1 },
 ];
 const getType = (id) => TYPES.find((t) => t.id === id) || TYPES[1];
+
+// Sidebar / filter navigation. "bank" and "people" are groups of two types.
+const NAV = [
+  { id: "all", label: "Dashboard", icon: LayoutDashboard },
+  { id: "income", label: "Income", icon: TrendingUp },
+  { id: "expense", label: "Expenses", icon: TrendingDown },
+  { id: "bank", label: "Bank", icon: Landmark },
+  { id: "people", label: "Lending", icon: HandCoins },
+];
+
+const matchesFilter = (t, filter) => {
+  if (filter === "all") return true;
+  if (filter === "bank") return t.type === "save" || t.type === "withdraw";
+  if (filter === "people") return t.type === "lend" || t.type === "repay";
+  return t.type === filter;
+};
 
 // Cool tonal scale (blues → indigos → teals → slate) so the pie reads as one
 // designed gradient rather than a rainbow.
@@ -230,7 +247,7 @@ export default function Home() {
 
   const filtered = useMemo(() => {
     return transactions.filter((t) => {
-      if (filterType !== "all" && t.type !== filterType) return false;
+      if (!matchesFilter(t, filterType)) return false;
       if (
         search &&
         !t.description.toLowerCase().includes(search.toLowerCase())
@@ -260,29 +277,34 @@ export default function Home() {
     })).filter((d) => d.value > 0);
   }, [transactions, thisMonthKey]);
 
-  // Income vs Expense, last 7 days
-  const last7Days = useMemo(() => {
-    const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      const label = d.toLocaleDateString(undefined, { weekday: "short" });
+  // Income vs Expense, last 6 months
+  const last6Months = useMemo(() => {
+    const base = new Date();
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+        2,
+        "0"
+      )}`;
+      const label = d.toLocaleDateString(undefined, {
+        month: "short",
+        year: "2-digit",
+      });
       let income = 0,
         expense = 0;
-      transactions
-        .filter((t) => t.date === key)
-        .forEach((t) => {
-          if (t.type === "income") income += t.amount;
-          else if (t.type === "expense") expense += t.amount;
-        });
-      days.push({
-        day: label,
+      for (const t of transactions) {
+        if (!t.date.startsWith(key)) continue;
+        if (t.type === "income") income += t.amount;
+        else if (t.type === "expense") expense += t.amount;
+      }
+      months.push({
+        month: label,
         income: parseFloat(income.toFixed(2)),
         expense: parseFloat(expense.toFixed(2)),
       });
     }
-    return days;
+    return months;
   }, [transactions]);
 
   const usesCategory = type === "expense" || type === "income";
@@ -290,23 +312,21 @@ export default function Home() {
     type === "income" ? INCOME_SOURCES : EXPENSE_CATEGORIES;
 
   return (
-    <main className="min-h-screen px-4 py-6 md:py-10 max-w-6xl mx-auto">
-      {/* Header */}
-      <header className="flex flex-wrap items-center justify-between gap-3 mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-sky-400 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/25">
-            <Wallet size={20} />
-          </div>
+    <div className="flex min-h-screen">
+      <Sidebar active={filterType} onSelect={setFilterType} />
+      <div className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-[1500px]">
+        <MobileNav active={filterType} onSelect={setFilterType} />
+        {/* Header */}
+        <header className="flex flex-wrap items-center justify-between gap-3 mb-8">
           <div>
             <h1 className="text-2xl md:text-[28px] font-bold tracking-tight leading-none">
-              Money Tracker
+              Dashboard
             </h1>
             <p className="text-[13px] text-slate-400 mt-1">
-              Income · Spending · Bank — all in your browser
+              Your money at a glance
             </p>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
           <select
             value={currency}
             onChange={(e) => setCurrency(e.target.value)}
@@ -368,6 +388,28 @@ export default function Home() {
           value={formatCurrency(totals.inHand, currency)}
           sub={`Net worth ${formatCurrency(totals.netWorth, currency)}`}
         />
+      </section>
+
+      {/* Charts row */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <div className="card p-6 lg:col-span-2">
+          <h2 className="text-[15px] font-semibold">Monthly Trend</h2>
+          <p className="text-xs text-slate-400 mb-4">
+            Income vs expenses, last 6 months
+          </p>
+          <MonthlyTrend data={last6Months} currency={currency} />
+        </div>
+        <div className="card p-6">
+          <h2 className="text-[15px] font-semibold">Top Categories</h2>
+          <p className="text-xs text-slate-400 mb-2">Spending this month</p>
+          {byCategory.length > 0 ? (
+            <TopCategories data={byCategory} currency={currency} />
+          ) : (
+            <div className="h-44 flex items-center justify-center text-center text-sm text-slate-400">
+              No spending recorded this month yet.
+            </div>
+          )}
+        </div>
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -513,28 +555,10 @@ export default function Home() {
               </button>
             </form>
           </div>
-
-          {/* Spending pie */}
-          {byCategory.length > 0 && (
-            <div className="card p-6 mt-4">
-              <h2 className="font-semibold mb-3 text-[15px]">
-                This Month — Spending by Category
-              </h2>
-              <SpendingPie data={byCategory} currency={currency} />
-            </div>
-          )}
         </section>
 
         {/* Right column */}
         <section className="lg:col-span-3">
-          {/* Income vs Expense, last 7 days */}
-          <div className="card p-6 mb-4">
-            <h2 className="font-semibold mb-4 text-[15px]">
-              Last 7 Days — In vs Out
-            </h2>
-            <WeeklyChart data={last7Days} currency={currency} />
-          </div>
-
           <div className="card p-6">
             <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
               <h2 className="font-semibold text-[15px]">
@@ -562,10 +586,9 @@ export default function Home() {
                   onChange={(e) => setFilterType(e.target.value)}
                   className="text-sm bg-slate-50 border border-slate-200/70 rounded-xl px-3 py-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition"
                 >
-                  <option value="all">All types</option>
-                  {TYPES.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.label}
+                  {NAV.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.id === "all" ? "All types" : n.label}
                     </option>
                   ))}
                 </select>
@@ -659,36 +682,146 @@ export default function Home() {
           </div>
         </div>
       )}
-    </main>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({ active, onSelect }) {
+  return (
+    <aside className="hidden lg:flex flex-col w-60 shrink-0 sticky top-0 h-screen border-r border-slate-200/70 bg-white/60 px-4 py-6">
+      <div className="flex items-center gap-2.5 px-2 mb-9">
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/25">
+          <Wallet size={18} />
+        </div>
+        <span className="font-bold text-lg tracking-tight">Money</span>
+      </div>
+      <nav className="space-y-1">
+        {NAV.map((n) => {
+          const Icon = n.icon;
+          const on = active === n.id;
+          return (
+            <button
+              key={n.id}
+              onClick={() => onSelect(n.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${
+                on
+                  ? "bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-lg shadow-blue-500/25"
+                  : "text-slate-500 hover:bg-slate-100/70 hover:text-slate-800"
+              }`}
+            >
+              <Icon size={18} />
+              {n.label}
+            </button>
+          );
+        })}
+      </nav>
+      <p className="mt-auto px-3 text-[11px] leading-relaxed text-slate-400">
+        Everything is saved locally in your browser.
+      </p>
+    </aside>
+  );
+}
+
+function MobileNav({ active, onSelect }) {
+  return (
+    <div className="lg:hidden -mx-4 px-4 mb-5 flex gap-2 overflow-x-auto pb-1">
+      {NAV.map((n) => {
+        const Icon = n.icon;
+        const on = active === n.id;
+        return (
+          <button
+            key={n.id}
+            onClick={() => onSelect(n.id)}
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+              on
+                ? "bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-md shadow-blue-500/25"
+                : "bg-white text-slate-500 border border-slate-200/70"
+            }`}
+          >
+            <Icon size={14} />
+            {n.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
 // Charts are memoized so high-frequency parent re-renders (typing in the
 // search/amount fields) don't re-render the expensive Recharts subtree.
 // Animations are disabled to avoid continuous requestAnimationFrame loops.
-const WeeklyChart = memo(function WeeklyChart({ data, currency }) {
+const MonthlyTrend = memo(function MonthlyTrend({ data, currency }) {
+  const compact = (v) =>
+    Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`;
   return (
-    <div className="h-40">
+    <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} barGap={2}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="day" tick={{ fontSize: 11 }} stroke="#64748b" />
-          <YAxis tick={{ fontSize: 11 }} stroke="#64748b" />
-          <Tooltip formatter={(v) => formatCurrency(v, currency)} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
+        <BarChart
+          data={data}
+          barGap={6}
+          barCategoryGap="24%"
+          margin={{ top: 8, right: 4, left: -12, bottom: 0 }}
+        >
+          <defs>
+            <linearGradient id="gIncome" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#2dd4bf" />
+              <stop offset="100%" stopColor="#0d9488" />
+            </linearGradient>
+            <linearGradient id="gExpense" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#fb7185" />
+              <stop offset="100%" stopColor="#e11d57" />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="4 4" stroke="#eef2f7" vertical={false} />
+          <XAxis
+            dataKey="month"
+            tick={{ fontSize: 12, fill: "#94a3b8" }}
+            axisLine={false}
+            tickLine={false}
+            dy={8}
+          />
+          <YAxis
+            tick={{ fontSize: 12, fill: "#94a3b8" }}
+            axisLine={false}
+            tickLine={false}
+            width={44}
+            tickFormatter={compact}
+          />
+          <Tooltip
+            cursor={{ fill: "rgba(148,163,184,0.08)" }}
+            contentStyle={{
+              borderRadius: 14,
+              border: "1px solid #eef2f7",
+              boxShadow: "0 12px 30px -12px rgba(15,23,42,0.25)",
+              fontSize: 13,
+              padding: "10px 12px",
+            }}
+            labelStyle={{ fontWeight: 600, marginBottom: 4 }}
+            formatter={(v, n) => [formatCurrency(v, currency), n]}
+          />
+          <Legend
+            iconType="circle"
+            iconSize={9}
+            wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
+          />
           <Bar
             dataKey="income"
-            name="In"
-            fill="#0d9488"
-            radius={[6, 6, 0, 0]}
+            name="income"
+            fill="url(#gIncome)"
+            radius={[10, 10, 10, 10]}
+            maxBarSize={18}
             isAnimationActive={false}
+            background={{ fill: "#f1f5f9", radius: 10 }}
           />
           <Bar
             dataKey="expense"
-            name="Out"
-            fill="#e11d57"
-            radius={[6, 6, 0, 0]}
+            name="expense"
+            fill="url(#gExpense)"
+            radius={[10, 10, 10, 10]}
+            maxBarSize={18}
             isAnimationActive={false}
+            background={{ fill: "#f1f5f9", radius: 10 }}
           />
         </BarChart>
       </ResponsiveContainer>
@@ -696,41 +829,66 @@ const WeeklyChart = memo(function WeeklyChart({ data, currency }) {
   );
 });
 
-const SpendingPie = memo(function SpendingPie({ data, currency }) {
+const TopCategories = memo(function TopCategories({ data, currency }) {
+  const sorted = [...data].sort((a, b) => b.value - a.value);
+  const total = sorted.reduce((s, d) => s + d.value, 0);
   return (
-    <>
-      <div className="h-52">
+    <div>
+      <div className="relative h-44">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
-              data={data}
+              data={sorted}
               dataKey="value"
               nameKey="name"
-              innerRadius={45}
-              outerRadius={75}
-              paddingAngle={2}
+              innerRadius={56}
+              outerRadius={80}
+              paddingAngle={3}
+              cornerRadius={6}
+              stroke="none"
               isAnimationActive={false}
             >
-              {data.map((d, i) => (
+              {sorted.map((d, i) => (
                 <Cell key={i} fill={d.color} />
               ))}
             </Pie>
-            <Tooltip formatter={(v) => formatCurrency(v, currency)} />
+            <Tooltip
+              formatter={(v) => formatCurrency(v, currency)}
+              contentStyle={{
+                borderRadius: 12,
+                border: "1px solid #eef2f7",
+                fontSize: 13,
+              }}
+            />
           </PieChart>
         </ResponsiveContainer>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-[11px] text-slate-400">Total</span>
+          <span className="tnum text-lg font-bold tracking-tight">
+            {formatCurrency(total, currency)}
+          </span>
+        </div>
       </div>
-      <div className="flex flex-wrap gap-2 mt-2">
-        {data.map((d) => (
-          <div key={d.name} className="flex items-center gap-1.5 text-xs">
-            <span
-              className="w-2.5 h-2.5 rounded-full"
-              style={{ background: d.color }}
-            />
-            {d.name}: {formatCurrency(d.value, currency)}
-          </div>
+      <ul className="mt-4 space-y-2.5">
+        {sorted.map((d) => (
+          <li
+            key={d.name}
+            className="flex items-center justify-between text-sm"
+          >
+            <span className="flex items-center gap-2 text-slate-600">
+              <span
+                className="w-2.5 h-2.5 rounded-full"
+                style={{ background: d.color }}
+              />
+              {d.name}
+            </span>
+            <span className="tnum font-semibold">
+              {formatCurrency(d.value, currency)}
+            </span>
+          </li>
         ))}
-      </div>
-    </>
+      </ul>
+    </div>
   );
 });
 
