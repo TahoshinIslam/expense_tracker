@@ -14,6 +14,8 @@ import {
   Search,
   Download,
   PiggyBank,
+  CheckCircle2,
+  Activity,
 } from "lucide-react";
 import {
   PieChart,
@@ -96,6 +98,14 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("all");
 
+  // toast / flash message
+  const [toast, setToast] = useState(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 2400);
+    return () => clearTimeout(id);
+  }, [toast]);
+
   // Load from localStorage (with one-time migration from the v1 expenses-only format)
   useEffect(() => {
     try {
@@ -157,6 +167,11 @@ export default function Home() {
       createdAt: Date.now(),
     };
     setTransactions((prev) => [newTx, ...prev]);
+    setToast({
+      key: Date.now(),
+      msg: `${getType(type).label} of ${formatCurrency(value, currency)} added`,
+      color: getType(type).color,
+    });
     setAmount("");
     setDescription("");
     setDate(todayISO());
@@ -164,6 +179,7 @@ export default function Home() {
 
   const deleteTransaction = (id) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
+    setToast({ key: Date.now(), msg: "Transaction deleted", color: "#64748b" });
   };
 
   const exportCSV = () => {
@@ -207,7 +223,9 @@ export default function Home() {
     const owed = lent - repaid; // money others still owe you (a receivable)
     const inHand = income - expense - bank - owed; // cash available right now
     const netWorth = inHand + bank + owed; // = income - expense (lending isn't a loss)
-    return { income, expense, bank, owed, inHand, netWorth };
+    // Total money that has flowed through, all time (gross volume of every entry)
+    const lifetimeFlow = income + expense + saved + withdrawn + lent + repaid;
+    return { income, expense, bank, owed, inHand, netWorth, lifetimeFlow };
   }, [transactions]);
 
   const filtered = useMemo(() => {
@@ -292,7 +310,7 @@ export default function Home() {
           <select
             value={currency}
             onChange={(e) => setCurrency(e.target.value)}
-            className="text-sm font-medium text-slate-600 border border-slate-200/70 rounded-xl px-3 py-2 bg-white/80 backdrop-blur shadow-sm hover:bg-white transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+            className="text-sm font-medium text-slate-600 border border-slate-200/70 rounded-xl px-3 py-2 bg-white shadow-sm hover:bg-slate-50 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/30"
           >
             <option value="USD">USD $</option>
             <option value="EUR">EUR €</option>
@@ -314,7 +332,7 @@ export default function Home() {
       </header>
 
       {/* Stats */}
-      <section className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+      <section className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <StatCard
           label="Money In"
           value={formatCurrency(totals.income, currency)}
@@ -338,6 +356,12 @@ export default function Home() {
           value={formatCurrency(totals.owed, currency)}
           icon={<HandCoins size={16} />}
           accent="bg-violet-50 text-violet-600"
+        />
+        <StatCard
+          label="Total Flow · lifetime"
+          value={formatCurrency(totals.lifetimeFlow, currency)}
+          icon={<Activity size={16} />}
+          accent="bg-amber-50 text-amber-600"
         />
         <HeroStatCard
           label="In Hand"
@@ -615,6 +639,26 @@ export default function Home() {
         All data is stored locally in your browser. Clearing site data will
         delete it.
       </footer>
+
+      {/* Flash / toast */}
+      {toast && (
+        <div
+          key={toast.key}
+          className="fixed bottom-5 right-5 z-50 toast-in"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-center gap-2.5 bg-slate-900 text-white text-sm font-medium pl-3 pr-4 py-3 rounded-2xl shadow-xl shadow-slate-900/20">
+            <span
+              className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: toast.color }}
+            >
+              <CheckCircle2 size={15} />
+            </span>
+            {toast.msg}
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -730,7 +774,7 @@ function HeroStatCard({ label, value, sub }) {
       <div className="relative">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-medium text-blue-100">{label}</span>
-          <span className="w-8 h-8 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
+          <span className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
             <Wallet size={16} />
           </span>
         </div>

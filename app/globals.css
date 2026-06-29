@@ -26,3 +26,18 @@ html, body {
 .tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* Toast: a short one-shot animation (no continuous compositing) */
+@keyframes toast-in {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.toast-in {
+  animation: toast-in 0.22s ease-out;
+}
