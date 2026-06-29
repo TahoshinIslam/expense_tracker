@@ -3,11 +3,10 @@
 @tailwind utilities;
 
 html, body {
-  background-color: #f6f8fc;
-  background-image:
-    radial-gradient(1200px 600px at 100% -10%, rgba(59, 130, 246, 0.10), transparent 60%),
-    radial-gradient(900px 500px at -10% 10%, rgba(14, 165, 233, 0.08), transparent 55%);
-  background-attachment: fixed;
+  /* Static, non-fixed gradient so the browser rasterizes it once instead of
+     repainting a full-viewport gradient on every scroll/animation frame. */
+  background-color: #eef3fb;
+  background-image: linear-gradient(180deg, #f1f5fc 0%, #f6f8fc 40%, #f6f8fc 100%);
   color: #0f172a;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
