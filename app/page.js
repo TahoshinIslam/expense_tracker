@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, memo, useRef } from "react";
+import { useEffect, useState, useMemo, memo } from "react";
 import {
   Plus,
   Trash2,
@@ -18,19 +18,6 @@ import {
   Activity,
   LayoutDashboard,
 } from "lucide-react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Legend,
-} from "recharts";
-
 const STORAGE_KEY = "expense-tracker:v2";
 const LEGACY_KEY = "expense-tracker:v1";
 
@@ -98,25 +85,6 @@ const formatCurrency = (n, currency = "USD") =>
     maximumFractionDigits: 2,
   }).format(n);
 
-// Measures a container's width with a guarded ResizeObserver. We render charts
-// at an explicit pixel width instead of Recharts' ResponsiveContainer, which
-// can enter an infinite resize loop (and freeze the tab) inside flex/grid
-// parents. The `prev === w ? prev : w` guard makes feedback loops impossible.
-function useWidth() {
-  const ref = useRef(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = Math.round(entries[0].contentRect.width);
-      setWidth((prev) => (prev === w ? prev : w));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width];
-}
 
 export default function Home() {
   const [transactions, setTransactions] = useState([]);
@@ -377,48 +345,57 @@ export default function Home() {
           value={formatCurrency(totals.income, currency)}
           icon={<TrendingUp size={16} />}
           accent="bg-teal-50 text-teal-600"
+          delay={0}
         />
         <StatCard
           label="Spent"
           value={formatCurrency(totals.expense, currency)}
           icon={<TrendingDown size={16} />}
           accent="bg-rose-50 text-rose-600"
+          delay={50}
         />
         <StatCard
           label="In Bank"
           value={formatCurrency(totals.bank, currency)}
           icon={<Landmark size={16} />}
           accent="bg-blue-50 text-blue-600"
+          delay={100}
         />
         <StatCard
           label="Owed to Me"
           value={formatCurrency(totals.owed, currency)}
           icon={<HandCoins size={16} />}
           accent="bg-violet-50 text-violet-600"
+          delay={150}
         />
         <StatCard
           label="Total Flow · lifetime"
           value={formatCurrency(totals.lifetimeFlow, currency)}
           icon={<Activity size={16} />}
           accent="bg-amber-50 text-amber-600"
+          delay={200}
         />
         <HeroStatCard
           label="In Hand"
           value={formatCurrency(totals.inHand, currency)}
           sub={`Net worth ${formatCurrency(totals.netWorth, currency)}`}
+          delay={250}
         />
       </section>
 
       {/* Charts row */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        <div className="card p-6 lg:col-span-2 min-w-0">
+        <div
+          className="card p-6 lg:col-span-2 min-w-0 rise"
+          style={{ animationDelay: "300ms" }}
+        >
           <h2 className="text-[15px] font-semibold">Monthly Trend</h2>
           <p className="text-xs text-slate-400 mb-4">
             Income vs expenses, last 6 months
           </p>
           <MonthlyTrend data={last6Months} currency={currency} />
         </div>
-        <div className="card p-6 min-w-0">
+        <div className="card p-6 min-w-0 rise" style={{ animationDelay: "350ms" }}>
           <h2 className="text-[15px] font-semibold">Top Categories</h2>
           <p className="text-xs text-slate-400 mb-2">Spending this month</p>
           {byCategory.length > 0 ? (
@@ -434,7 +411,7 @@ export default function Home() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Add transaction form */}
         <section className="lg:col-span-2">
-          <div className="card p-6">
+          <div className="card p-6 rise" style={{ animationDelay: "400ms" }}>
             <h2 className="text-[15px] font-semibold mb-4 flex items-center gap-2">
               <span className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
                 <Plus size={15} />
@@ -578,7 +555,7 @@ export default function Home() {
 
         {/* Right column */}
         <section className="lg:col-span-3">
-          <div className="card p-6">
+          <div className="card p-6 rise" style={{ animationDelay: "450ms" }}>
             <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
               <h2 className="font-semibold text-[15px]">
                 History{" "}
@@ -767,126 +744,105 @@ function MobileNav({ active, onSelect }) {
   );
 }
 
-// Charts are memoized so high-frequency parent re-renders (typing in the
-// search/amount fields) don't re-render the expensive Recharts subtree.
-// Animations are disabled to avoid continuous requestAnimationFrame loops.
-const MonthlyTrend = memo(function MonthlyTrend({ data, currency }) {
-  const [ref, w] = useWidth();
-  const compact = (v) =>
-    Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`;
+// Lightweight, dependency-free charts. Pure CSS/SVG so there's no charting
+// library, no ResizeObserver, no animation loop — they're naturally responsive
+// and the load animation is a one-shot CSS keyframe that costs nothing once done.
+const TrendBar = memo(function TrendBar({ value, max, gradient, delay, currency }) {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  const h = value > 0 ? Math.max(pct, 3) : 0;
   return (
-    <div ref={ref} className="h-64 w-full">
-      {w > 0 && (
-        <BarChart
-          width={w}
-          height={256}
-          data={data}
-          barGap={6}
-          barCategoryGap="24%"
-          margin={{ top: 8, right: 4, left: -12, bottom: 0 }}
-        >
-          <defs>
-            <linearGradient id="gIncome" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#2dd4bf" />
-              <stop offset="100%" stopColor="#0d9488" />
-            </linearGradient>
-            <linearGradient id="gExpense" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#fb7185" />
-              <stop offset="100%" stopColor="#e11d57" />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="4 4" stroke="#eef2f7" vertical={false} />
-          <XAxis
-            dataKey="month"
-            tick={{ fontSize: 12, fill: "#94a3b8" }}
-            axisLine={false}
-            tickLine={false}
-            dy={8}
-          />
-          <YAxis
-            tick={{ fontSize: 12, fill: "#94a3b8" }}
-            axisLine={false}
-            tickLine={false}
-            width={44}
-            tickFormatter={compact}
-          />
-          <Tooltip
-            cursor={{ fill: "rgba(148,163,184,0.08)" }}
-            contentStyle={{
-              borderRadius: 14,
-              border: "1px solid #eef2f7",
-              boxShadow: "0 12px 30px -12px rgba(15,23,42,0.25)",
-              fontSize: 13,
-              padding: "10px 12px",
-            }}
-            labelStyle={{ fontWeight: 600, marginBottom: 4 }}
-            formatter={(v, n) => [formatCurrency(v, currency), n]}
-          />
-          <Legend
-            iconType="circle"
-            iconSize={9}
-            wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
-          />
-          <Bar
-            dataKey="income"
-            name="income"
-            fill="url(#gIncome)"
-            radius={[10, 10, 10, 10]}
-            maxBarSize={18}
-            isAnimationActive={false}
-            background={{ fill: "#f1f5f9", radius: 10 }}
-          />
-          <Bar
-            dataKey="expense"
-            name="expense"
-            fill="url(#gExpense)"
-            radius={[10, 10, 10, 10]}
-            maxBarSize={18}
-            isAnimationActive={false}
-            background={{ fill: "#f1f5f9", radius: 10 }}
-          />
-        </BarChart>
-      )}
+    <div className="group relative h-full flex-1 max-w-[18px] flex items-end">
+      {/* ghost track */}
+      <div className="absolute inset-0 rounded-full bg-slate-100" />
+      {/* fill */}
+      <div
+        className="relative w-full rounded-full bar-grow"
+        style={{ height: `${h}%`, background: gradient, animationDelay: `${delay}ms` }}
+      />
+      {/* hover value */}
+      <div className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 text-white text-[11px] px-2 py-1 opacity-0 group-hover:opacity-100 transition shadow-lg z-10">
+        {formatCurrency(value, currency)}
+      </div>
+    </div>
+  );
+});
+
+const MonthlyTrend = memo(function MonthlyTrend({ data, currency }) {
+  const max = Math.max(1, ...data.map((m) => Math.max(m.income, m.expense)));
+  return (
+    <div>
+      <div className="flex items-end gap-2 sm:gap-4 h-56">
+        {data.map((m, i) => (
+          <div
+            key={m.month}
+            className="flex-1 h-full flex flex-col items-center gap-2"
+          >
+            <div className="relative flex-1 w-full flex items-end justify-center gap-1.5">
+              <TrendBar
+                value={m.income}
+                max={max}
+                gradient="linear-gradient(180deg,#2dd4bf,#0d9488)"
+                delay={i * 90}
+                currency={currency}
+              />
+              <TrendBar
+                value={m.expense}
+                max={max}
+                gradient="linear-gradient(180deg,#fb7185,#e11d57)"
+                delay={i * 90 + 45}
+                currency={currency}
+              />
+            </div>
+            <span className="text-xs text-slate-400">{m.month}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-center gap-6 mt-4 text-xs text-slate-500">
+        <span className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-teal-600" /> income
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-rose-600" /> expense
+        </span>
+      </div>
     </div>
   );
 });
 
 const TopCategories = memo(function TopCategories({ data, currency }) {
-  const [ref, w] = useWidth();
   const sorted = [...data].sort((a, b) => b.value - a.value);
-  const total = sorted.reduce((s, d) => s + d.value, 0);
+  const total = sorted.reduce((s, d) => s + d.value, 0) || 1;
+  // Build donut slices as stroked SVG arcs.
+  const r = 42;
+  const C = 2 * Math.PI * r;
+  const gap = sorted.length > 1 ? 3 : 0; // small gap between slices
+  let acc = 0;
+  const arcs = sorted.map((d) => {
+    const frac = d.value / total;
+    const len = Math.max(frac * C - gap, 0.5);
+    const node = (
+      <circle
+        key={d.name}
+        cx="60"
+        cy="60"
+        r={r}
+        fill="none"
+        stroke={d.color}
+        strokeWidth="16"
+        strokeLinecap="round"
+        strokeDasharray={`${len} ${C - len}`}
+        strokeDashoffset={-acc}
+      />
+    );
+    acc += frac * C;
+    return node;
+  });
   return (
     <div>
-      <div ref={ref} className="relative h-44 w-full">
-        {w > 0 && (
-          <PieChart width={w} height={176}>
-            <Pie
-              data={sorted}
-              dataKey="value"
-              nameKey="name"
-              cx={w / 2}
-              cy={88}
-              innerRadius={56}
-              outerRadius={80}
-              paddingAngle={3}
-              cornerRadius={6}
-              stroke="none"
-              isAnimationActive={false}
-            >
-              {sorted.map((d, i) => (
-                <Cell key={i} fill={d.color} />
-              ))}
-            </Pie>
-            <Tooltip
-              formatter={(v) => formatCurrency(v, currency)}
-              contentStyle={{
-                borderRadius: 12,
-                border: "1px solid #eef2f7",
-                fontSize: 13,
-              }}
-            />
-          </PieChart>
-        )}
+      <div className="relative h-44 flex items-center justify-center">
+        <svg viewBox="0 0 120 120" className="h-40 w-40 -rotate-90 donut-in">
+          {arcs}
+        </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
           <span className="text-[11px] text-slate-400">Total</span>
           <span className="tnum text-lg font-bold tracking-tight">
@@ -895,10 +851,11 @@ const TopCategories = memo(function TopCategories({ data, currency }) {
         </div>
       </div>
       <ul className="mt-4 space-y-2.5">
-        {sorted.map((d) => (
+        {sorted.map((d, i) => (
           <li
             key={d.name}
-            className="flex items-center justify-between text-sm"
+            className="flex items-center justify-between text-sm rise"
+            style={{ animationDelay: `${150 + i * 60}ms` }}
           >
             <span className="flex items-center gap-2 text-slate-600">
               <span
@@ -927,9 +884,12 @@ function TxIcon({ type }) {
   return <Wallet size={16} />;
 }
 
-function StatCard({ label, value, icon, accent }) {
+function StatCard({ label, value, icon, accent, delay = 0 }) {
   return (
-    <div className="card p-5 transition-transform hover:-translate-y-0.5">
+    <div
+      className="card p-5 rise transition-transform hover:-translate-y-0.5"
+      style={{ animationDelay: `${delay}ms` }}
+    >
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-medium text-slate-400">{label}</span>
         <span
@@ -943,9 +903,12 @@ function StatCard({ label, value, icon, accent }) {
   );
 }
 
-function HeroStatCard({ label, value, sub }) {
+function HeroStatCard({ label, value, sub, delay = 0 }) {
   return (
-    <div className="relative overflow-hidden rounded-3xl p-5 text-white bg-gradient-to-br from-sky-500 via-blue-600 to-blue-700 shadow-xl shadow-blue-500/30">
+    <div
+      className="relative overflow-hidden rounded-3xl p-5 text-white bg-gradient-to-br from-sky-500 via-blue-600 to-blue-700 shadow-xl shadow-blue-500/30 rise"
+      style={{ animationDelay: `${delay}ms` }}
+    >
       {/* Soft highlight using a cheap radial gradient (no blur filter = no GPU churn) */}
       <div
         className="absolute inset-0 pointer-events-none"
