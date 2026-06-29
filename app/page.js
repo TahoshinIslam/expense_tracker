@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, memo } from "react";
+import { useEffect, useState, useMemo, memo, useRef } from "react";
 import {
   Plus,
   Trash2,
@@ -22,7 +22,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  ResponsiveContainer,
   Tooltip,
   BarChart,
   Bar,
@@ -98,6 +97,26 @@ const formatCurrency = (n, currency = "USD") =>
     currency,
     maximumFractionDigits: 2,
   }).format(n);
+
+// Measures a container's width with a guarded ResizeObserver. We render charts
+// at an explicit pixel width instead of Recharts' ResponsiveContainer, which
+// can enter an infinite resize loop (and freeze the tab) inside flex/grid
+// parents. The `prev === w ? prev : w` guard makes feedback loops impossible.
+function useWidth() {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = Math.round(entries[0].contentRect.width);
+      setWidth((prev) => (prev === w ? prev : w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width];
+}
 
 export default function Home() {
   const [transactions, setTransactions] = useState([]);
@@ -392,14 +411,14 @@ export default function Home() {
 
       {/* Charts row */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        <div className="card p-6 lg:col-span-2">
+        <div className="card p-6 lg:col-span-2 min-w-0">
           <h2 className="text-[15px] font-semibold">Monthly Trend</h2>
           <p className="text-xs text-slate-400 mb-4">
             Income vs expenses, last 6 months
           </p>
           <MonthlyTrend data={last6Months} currency={currency} />
         </div>
-        <div className="card p-6">
+        <div className="card p-6 min-w-0">
           <h2 className="text-[15px] font-semibold">Top Categories</h2>
           <p className="text-xs text-slate-400 mb-2">Spending this month</p>
           {byCategory.length > 0 ? (
@@ -752,12 +771,15 @@ function MobileNav({ active, onSelect }) {
 // search/amount fields) don't re-render the expensive Recharts subtree.
 // Animations are disabled to avoid continuous requestAnimationFrame loops.
 const MonthlyTrend = memo(function MonthlyTrend({ data, currency }) {
+  const [ref, w] = useWidth();
   const compact = (v) =>
     Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`;
   return (
-    <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
+    <div ref={ref} className="h-64 w-full">
+      {w > 0 && (
         <BarChart
+          width={w}
+          height={256}
           data={data}
           barGap={6}
           barCategoryGap="24%"
@@ -824,23 +846,26 @@ const MonthlyTrend = memo(function MonthlyTrend({ data, currency }) {
             background={{ fill: "#f1f5f9", radius: 10 }}
           />
         </BarChart>
-      </ResponsiveContainer>
+      )}
     </div>
   );
 });
 
 const TopCategories = memo(function TopCategories({ data, currency }) {
+  const [ref, w] = useWidth();
   const sorted = [...data].sort((a, b) => b.value - a.value);
   const total = sorted.reduce((s, d) => s + d.value, 0);
   return (
     <div>
-      <div className="relative h-44">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+      <div ref={ref} className="relative h-44 w-full">
+        {w > 0 && (
+          <PieChart width={w} height={176}>
             <Pie
               data={sorted}
               dataKey="value"
               nameKey="name"
+              cx={w / 2}
+              cy={88}
               innerRadius={56}
               outerRadius={80}
               paddingAngle={3}
@@ -861,7 +886,7 @@ const TopCategories = memo(function TopCategories({ data, currency }) {
               }}
             />
           </PieChart>
-        </ResponsiveContainer>
+        )}
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
           <span className="text-[11px] text-slate-400">Total</span>
           <span className="tnum text-lg font-bold tracking-tight">
